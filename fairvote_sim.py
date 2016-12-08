@@ -23,17 +23,21 @@ def weighted_corr(data, s, w):
     return (c/np.sqrt(v*v[-1]))[:-1]
 
 def ranked_vote(d):
-    n = data.shape[0]
+    #n = data.shape[0]
     m = procon.shape[1]
     
     # simulate election
     v = pd.DataFrame(columns = d.columns)
     for i in range(m):
+        # drop voters whose ballots are exhausted
+        d.dropna(how='all', inplace=True)
+        
+        # calculate votes
         r = d.idxmin(axis=1).value_counts()
         v = v.append(r, ignore_index=True)
         
         # check for a winner
-        if float(r.max())/n > 0.5:
+        if float(r.max())/float(r.sum()) > 0.5:
             break
         # otherwise drop the loser and continue
         else:
@@ -46,6 +50,7 @@ if __name__ == '__main__':
     # election "results"
     results = pd.read_csv('presidential_general_election_2016.csv')
     results['name'].replace('^[A-Z]. ', '', inplace=True, regex=True)
+    codes = pd.read_csv('usps_codes.csv', index_col=0, encoding='utf-8')
     
     # candidate info
     procon = pd.read_csv('procon_data.csv', index_col='Question')
@@ -53,6 +58,7 @@ if __name__ == '__main__':
     N = 10000
     
     # generate voters data
+    print 'generating random voters'
     voters = pd.DataFrame(index=range(N), columns=procon.columns)
     for i in range(N):
         # calculate random scores and weights
@@ -61,12 +67,17 @@ if __name__ == '__main__':
         
         # get weighted correlation with candidates, determine ballot rank
         v = pd.Series(weighted_corr(procon.as_matrix(), scores, weights), index=procon.columns)
-        voters.iloc[i] = v.rank(ascending=False)
-    
+        voters.iloc[i] = v[v > 0].rank(ascending=False)
+        
     # generate state results
+    states = results['state'].unique()
+    r0 = pd.DataFrame(index=codes.code, columns=procon.columns)
+    r1 = pd.DataFrame(index=codes.code, columns=procon.columns)
+    print 'calculating state results'
     for s in results['state'].unique():
         # get votes by candidate
         votes = results[results['state'] == s].groupby('name').sum()['votes'][procon.columns]
+        r0.loc[codes.loc[s].code] = votes
         votes.dropna(inplace=True)
  
         # generate simulated ballots       
@@ -75,7 +86,18 @@ if __name__ == '__main__':
             data = data.append(voters[voters[c] == 1].sample(votes[c], replace=True), ignore_index=True)
         
         # run ranked vote sim (only for candidates with votes in state)
-        v = ranked_vote(data[votes.index])
-        print s
-        print v    
-        
+        #d = data[votes.index]
+        v = ranked_vote(data[votes.index].copy())
+        r1.loc[codes.loc[s].code] = v.iloc[-1]
+        #print s
+        #print v    
+    
+    r0.dropna(inplace=True, how='all')
+    r0.fillna(0, inplace=True)
+    r0.transpose().astype(np.int32).to_json('before.json')
+    
+    r1.dropna(inplace=True, how='all')
+    r1.fillna(0, inplace=True)
+    r1.transpose().astype(np.int32).to_json('after.json')
+
+    
